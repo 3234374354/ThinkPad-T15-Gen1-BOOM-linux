@@ -166,41 +166,131 @@ restore_defaults() {
 select_gpu_devices() {
   echo_color $CYAN "扫描 PCI 总线上的显卡设备..."
   mapfile -t gpu_devs < <(lspci -Dn | grep -Ei 'vga|3d' | awk '{print $1}')
+  
   if [[ ${#gpu_devs[@]} -eq 0 ]]; then
     echo_color $RED "[!] 未检测到任何显卡设备。"
-    return 1
-  fi
-
-  echo_color $CYAN "检测到以下显卡设备："
-  for i in "${!gpu_devs[@]}"; do
-    dev="${gpu_devs[i]}"
-    desc=$(lspci -s "$dev" | cut -d' ' -f2-)
-    echo_color $MAGENTA "  $((i+1))) $dev - $desc"
-  done
-
-  echo_color $YELLOW "请输入要操作的设备编号，多个用逗号分隔（例如 1,3），留空选择全部："
-  read -r input
-  if [[ -z "$input" ]]; then
-    selected_paths=()
-    for dev in "${gpu_devs[@]}"; do
-      selected_paths+=("/sys/bus/pci/devices/0000:${dev}")
+    echo_color $YELLOW "[!] 将显示所有 PCI 设备供手动选择。"
+    
+    # 获取所有 PCI 设备
+    mapfile -t all_pci_devs < <(lspci -Dn | awk '{print $1}')
+    
+    if [[ ${#all_pci_devs[@]} -eq 0 ]]; then
+      echo_color $RED "[!] 未检测到任何 PCI 设备。"
+      return 1
+    fi
+    
+    echo_color $CYAN "检测到以下所有 PCI 设备："
+    for i in "${!all_pci_devs[@]}"; do
+      dev="${all_pci_devs[i]}"
+      desc=$(lspci -s "$dev" | cut -d' ' -f2-)
+      echo_color $MAGENTA "  $((i+1))) $dev - $desc"
     done
-  else
-    IFS=',' read -ra sel_indices <<< "$input"
+    
+    echo_color $RED "=============================================="
+    echo_color $YELLOW "警告：手动选择非显卡设备可能导致系统崩溃！"
+    echo_color $RED "=============================================="
+    echo_color $YELLOW "请输入要操作的设备编号（如 1,2,3）或手动输入设备ID（如 2d:00.0）"
+    echo_color $YELLOW "多个设备用逗号分隔，留空选择全部："
+    read -r input
+    
     selected_paths=()
-    for idx in "${sel_indices[@]}"; do
-      if [[ "$idx" =~ ^[0-9]+$ ]] && (( idx >= 1 && idx <= ${#gpu_devs[@]} )); then
-        dev="${gpu_devs[$((idx-1))]}"
+    
+    # 处理手动输入或选择
+    if [[ -z "$input" ]]; then
+      # 选择全部
+      for dev in "${all_pci_devs[@]}"; do
         path="/sys/bus/pci/devices/0000:${dev}"
         if [[ -d "$path" ]]; then
           selected_paths+=("$path")
         else
           echo_color $RED "[!] 设备路径不存在：$path"
         fi
-      else
-        echo_color $RED "[!] 无效编号：$idx"
-      fi
+      done
+    else
+      IFS=',' read -ra inputs <<< "$input"
+      for item in "${inputs[@]}"; do
+        if [[ "$item" =~ ^[0-9]+$ ]]; then
+          # 数字选择
+          idx=$((item - 1))
+          if (( idx >= 0 && idx < ${#all_pci_devs[@]} )); then
+            dev="${all_pci_devs[$idx]}"
+            path="/sys/bus/pci/devices/0000:${dev}"
+            if [[ -d "$path" ]]; then
+              selected_paths+=("$path")
+            else
+              echo_color $RED "[!] 设备路径不存在：$path"
+            fi
+          else
+            echo_color $RED "[!] 无效编号：$item"
+          fi
+        elif [[ "$item" =~ ^[0-9a-fA-F]{2,4}:[0-9a-fA-F]{2}\.[0-9]$ ]]; then
+          # 手动输入设备ID
+          path="/sys/bus/pci/devices/0000:${item}"
+          if [[ -d "$path" ]]; then
+            selected_paths+=("$path")
+          else
+            echo_color $RED "[!] 设备路径不存在：$path"
+          fi
+        else
+          echo_color $RED "[!] 无效输入：$item"
+        fi
+      done
+    fi
+  else
+    # 检测到显卡设备的情况
+    echo_color $CYAN "检测到以下显卡设备："
+    for i in "${!gpu_devs[@]}"; do
+      dev="${gpu_devs[i]}"
+      desc=$(lspci -s "$dev" | cut -d' ' -f2-)
+      echo_color $MAGENTA "  $((i+1))) $dev - $desc"
     done
+    
+    echo_color $YELLOW "请输入要操作的设备编号（如 1,2,3）或手动输入设备ID（如 2d:00.0）"
+    echo_color $YELLOW "多个设备用逗号分隔，留空选择全部："
+    read -r input
+    
+    selected_paths=()
+    
+    if [[ -z "$input" ]]; then
+      # 选择全部
+      for dev in "${gpu_devs[@]}"; do
+        path="/sys/bus/pci/devices/0000:${dev}"
+        if [[ -d "$path" ]]; then
+          selected_paths+=("$path")
+        else
+          echo_color $RED "[!] 设备路径不存在：$path"
+        fi
+      done
+    else
+      IFS=',' read -ra inputs <<< "$input"
+      for item in "${inputs[@]}"; do
+        if [[ "$item" =~ ^[0-9]+$ ]]; then
+          # 数字选择
+          idx=$((item - 1))
+          if (( idx >= 0 && idx < ${#gpu_devs[@]} )); then
+            dev="${gpu_devs[$idx]}"
+            path="/sys/bus/pci/devices/0000:${dev}"
+            if [[ -d "$path" ]]; then
+              selected_paths+=("$path")
+            else
+              echo_color $RED "[!] 设备路径不存在：$path"
+            fi
+          else
+            echo_color $RED "[!] 无效编号：$item"
+          fi
+        elif [[ "$item" =~ ^[0-9a-fA-F]{2,4}:[0-9a-fA-F]{2}\.[0-9]$ ]]; then
+          # 手动输入设备ID
+          path="/sys/bus/pci/devices/0000:${item}"
+          if [[ -d "$path" ]]; then
+            selected_paths+=("$path")
+          else
+            echo_color $RED "[!] 设备路径不存在：$path"
+          fi
+        else
+          echo_color $RED "[!] 无效输入：$item"
+        fi
+      done
+    fi
   fi
 
   if [[ ${#selected_paths[@]} -eq 0 ]]; then
@@ -208,42 +298,65 @@ select_gpu_devices() {
     return 1
   fi
 
-  GPU_SELECTED_PATHS=("${selected_paths[@]}")
-  echo_color $GREEN "[*] 已选定设备路径："
-  for p in "${GPU_SELECTED_PATHS[@]}"; do
-    echo "  - $p"
+  echo_color $RED "=============================================="
+  echo_color $YELLOW "警告：你选择了以下设备进行操作："
+  for p in "${selected_paths[@]}"; do
+    echo_color $RED "  - $p"
+    device_id=$(basename "$p")
+    device_desc=$(lspci -s "${device_id#0000:}" 2>/dev/null || echo "未知设备")
+    echo_color $YELLOW "    描述: $device_desc"
   done
+  echo_color $RED "=============================================="
+  echo_color $YELLOW "请确认这些设备是否正确！操作错误可能导致："
+  echo_color $YELLOW "1. 系统立即崩溃"
+  echo_color $YELLOW "2. 硬件损坏"
+  echo_color $YELLOW "3. 数据丢失"
+  echo_color $RED "=============================================="
+  
+  read -rp "$(echo_color $RED "确认要操作这些设备吗？(输入 Y 继续): ")" confirm
+  if [[ "$confirm" != "Y" ]]; then
+    echo_color $CYAN "操作已取消。"
+    return 1
+  fi
+
+  GPU_SELECTED_PATHS=("${selected_paths[@]}")
   return 0
 }
 
 disable_gpu() {
-  select_gpu_devices || { echo_color $RED "没有显卡设备可操作，返回主菜单"; return; }
-  REQUIRE_CONFIRM
-  echo_color $BLUE "[*] 关闭独立显卡（禁用 PCI 设备 + 断电）..."
-  for gpu_dev in "${GPU_SELECTED_PATHS[@]}"; do
-    echo_color $YELLOW "-> 禁用设备 $gpu_dev"
-    echo 1 > "$gpu_dev/remove" 2>/dev/null || echo_color $RED "  禁用失败"
-    echo "auto" > "$gpu_dev/power/control" 2>/dev/null || true
-    echo 0 > "$gpu_dev/power/runtime_status" 2>/dev/null || true
-    echo 0 > "$gpu_dev/power/runtime_autosuspend" 2>/dev/null || true
-    echo_color $GREEN "  设备已断电"
-  done
-  echo_color $GREEN "[*] 独显已关闭。"
+  if select_gpu_devices; then
+    REQUIRE_CONFIRM
+    echo_color $BLUE "[*] 关闭选定设备（禁用 PCI 设备 + 断电）..."
+    for gpu_dev in "${GPU_SELECTED_PATHS[@]}"; do
+      echo_color $YELLOW "-> 禁用设备 $gpu_dev"
+      echo 1 > "$gpu_dev/remove" 2>/dev/null || echo_color $RED "  禁用失败"
+      echo "auto" > "$gpu_dev/power/control" 2>/dev/null || true
+      echo 0 > "$gpu_dev/power/runtime_status" 2>/dev/null || true
+      echo 0 > "$gpu_dev/power/runtime_autosuspend" 2>/dev/null || true
+      echo_color $GREEN "  设备已断电"
+    done
+    echo_color $GREEN "[*] 设备已关闭。"
+  else
+    echo_color $RED "没有设备被选择，返回主菜单"
+  fi
 }
 
 enable_gpu() {
-  select_gpu_devices || { echo_color $RED "没有显卡设备可操作，返回主菜单"; return; }
-  REQUIRE_CONFIRM
-  echo_color $BLUE "[*] 重新启用独立显卡（重新扫描 PCI 总线设备）..."
-  for gpu_dev in "${GPU_SELECTED_PATHS[@]}"; do
-    # 从路径提取 PCI ID
-    pci_id=$(basename "$gpu_dev")
-    echo_color $YELLOW "-> 重新扫描设备 0000:$pci_id"
-    echo 1 > /sys/bus/pci/rescan  # 通知重新扫描总线
-    echo "on" > "$gpu_dev/power/control" 2>/dev/null || true
-    echo_color $GREEN "  设备已重新启用"
-  done
-  echo_color $GREEN "[*] 独显已重新开启。"
+  if select_gpu_devices; then
+    REQUIRE_CONFIRM
+    echo_color $BLUE "[*] 重新启用选定设备（重新扫描 PCI 总线设备）..."
+    for gpu_dev in "${GPU_SELECTED_PATHS[@]}"; do
+      # 从路径提取 PCI ID
+      pci_id=$(basename "$gpu_dev")
+      echo_color $YELLOW "-> 重新扫描设备 0000:$pci_id"
+      echo 1 > /sys/bus/pci/rescan  # 通知重新扫描总线
+      echo "on" > "$gpu_dev/power/control" 2>/dev/null || true
+      echo_color $GREEN "  设备已重新启用"
+    done
+    echo_color $GREEN "[*] 设备已重新开启。"
+  else
+    echo_color $RED "没有设备被选择，返回主菜单"
+  fi
 }
 
 menu() {
@@ -252,8 +365,8 @@ ${MAGENTA}===== 极限调控神器菜单 =====${RESET}
 1) 初始化（安装依赖、禁用温控服务、黑名单热模块）
 2) CPU 极限模式（锁最高频）
 3) CPU 保守节能模式（1300MHz）
-4) 彻底关闭独立显卡（禁用 PCI + 断电）
-5) 重新开启独立显卡（扫描 PCI + 上电）
+4) 彻底关闭选定设备（禁用 PCI + 断电）
+5) 重新开启选定设备（扫描 PCI + 上电）
 6) 恢复默认设置（启用服务，恢复 CPU/GPU）
 0) 退出
 ============================
