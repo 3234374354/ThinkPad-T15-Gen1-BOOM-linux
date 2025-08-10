@@ -259,7 +259,7 @@ ${MAGENTA}===== 极限调控神器菜单 =====${RESET}
 ============================
 EOF
   read -rp "选择 (0-6): " choice
-  case "$choice" 在
+  case "$choice" in
     1)
       REQUIRE_CONFIRM
       install_deps
